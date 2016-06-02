@@ -104,3 +104,14 @@ class TestPrinterpreter(unittest.TestCase):
 
     def test_error(self):
         self.assertEqual(self.refactor('return return\n'), 'return ?return\n')
+
+    def test_empty_block(self):
+        """Test an empty block is allowed to end."""
+        self.assertEqual(self.refactor('if True:\n'), '#\n')
+        self.assertEqual(self.refactor('\n'), 'if True:\n\n')
+
+    def test_bad_try(self):
+        """Test a try with no except is allowed to end."""
+        self.assertEqual(self.refactor('try:\n'), '#\n')
+        self.assertEqual(self.refactor(' pass\n'), '#\n')
+        self.assertEqual(self.refactor('\n'), 'try:\n pass\n\n')

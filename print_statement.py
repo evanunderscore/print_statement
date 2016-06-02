@@ -78,6 +78,9 @@ class _Printerpreter:
             return line
         except ParseError as err:
             if err.value == '':
+                if line.endswith('\n\n'):
+                    logger.exception('unknown parse error - interpreter should handle')
+                    return line
                 logger.debug('incomplete block - may need more input')
                 raise _IncompleteInputException
             # No way to consistently treat print as a statement and function,
