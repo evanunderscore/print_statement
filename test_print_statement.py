@@ -7,6 +7,9 @@ import print_statement
 from print_statement import refactor
 
 
+print_statement.install()
+
+
 class TestRefactor(unittest.TestCase):
     def test_simple(self):
         self.assertEqual(refactor('print 1'), 'print(1)')
@@ -46,6 +49,7 @@ class TestPrinterpreter(unittest.TestCase):
     def setUp(self):
         self.printerpreter = print_statement._Printerpreter()
         self.refactor = self.printerpreter.refactor
+        self.printerpreter.refactor('from __past__ import print_statement\n')
 
     def test_simple(self):
         self.assertEqual(self.refactor('print 1\n'), 'print(1)\n')
@@ -141,6 +145,14 @@ class TestImport(unittest.TestCase):
         self.assertEqual(buffer.read(), '_test_package.test_module\n')
         self.assertEqual(test_module.test.__module__, '_test_package.test_module')
 
+    def test_import_module_plain(self):
+        from _test_package import plain_module
+        buffer = io.StringIO()
+        plain_module.test(buffer)
+        buffer.seek(0)
+        self.assertEqual(buffer.read(), '_test_package.plain_module\n')
+        self.assertEqual(plain_module.test.__module__, '_test_package.plain_module')
+
     def test_token_error(self):
         with self.assertRaises(SyntaxError) as err:
             from _test_package import token_error
@@ -152,3 +164,16 @@ class TestImport(unittest.TestCase):
             from _test_package import parse_error
         filename = os.path.basename(err.exception.filename)
         self.assertEqual(filename, 'parse_error.py')
+
+
+class TestPastImport(unittest.TestCase):
+    def test_printerpreter(self):
+        printer = print_statement._Printerpreter()
+        printer.refactor('if True:\n', '>>> ')
+        printer.refactor('from __past__ import print_statement\n', '... ')
+        printer.refactor('"""\n', '>>> ')
+        printer.refactor('from __past__ import print_statement\n', '... ')
+        printer.refactor('"""\n', '... ')
+        self.assertEqual(printer.refactor('print 1\n', '>>> '), 'print 1\n')
+        printer.refactor('from __past__ import print_statement\n', '>>> ')
+        self.assertEqual(printer.refactor('print 1\n', '>>> '), 'print(1)\n')

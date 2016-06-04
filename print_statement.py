@@ -1,7 +1,9 @@
+import argparse
 import importlib
 import importlib.machinery
 import importlib.util
 import logging
+import os
 import sys
 from ctypes import c_char_p, c_size_t, c_void_p, cast, memmove, pythonapi, CFUNCTYPE
 from lib2to3.refactor import RefactoringTool
@@ -48,6 +50,7 @@ class _Printerpreter:
     _MARKER = '### ^^^ context | vvv buffer ###\n'
 
     def __init__(self):
+        self._print_statement = False
         self._context = []
         self._buffer = []
 
@@ -69,18 +72,28 @@ class _Printerpreter:
             if prompt == ps1:
                 self.reset()
         assert not line or line.endswith('\n')
+        if self._check_past_import(line):
+            return '\n'
         self._buffer.append(line)
-        try:
-            line = ''.join(self._context + [self._MARKER] + self._buffer)
-            line = self._refactor(line)
-            _, line = line.split(self._MARKER)
-        except _IncompleteInputException:
-            # The user hasn't finished typing their statement -
-            # return a no-op and keep the line in the buffer.
-            return '#\n'
+        if self._print_statement:
+            try:
+                line = ''.join(self._context + [self._MARKER] + self._buffer)
+                line = self._refactor(line)
+                _, line = line.split(self._MARKER)
+            except _IncompleteInputException:
+                # The user hasn't finished typing their statement -
+                # return a no-op and keep the line in the buffer.
+                return '#\n'
         self._context.extend(self._buffer)
         self._buffer.clear()
         return line
+
+    def _check_past_import(self, line):
+        if self._context or self._buffer:
+            return False
+        if line.split() == 'from __past__ import print_statement'.split():
+            self._print_statement = True
+            return True
 
     @staticmethod
     def _refactor(line):
@@ -132,7 +145,7 @@ pythonapi.PyMem_Realloc.restype = c_void_p
 
 @PyOS_ReadlineFunctionPointer_t
 def _call_readline(stdin, stdout, prompt):
-    ptr = _original_call_readline(stdin, stdout, prompt)
+    ptr = _original(stdin, stdout, prompt)
     prompt = prompt.decode()
     line = cast(ptr, c_char_p).value.decode(sys.stdin.encoding)
     logger.debug('input line %r', line)
@@ -150,6 +163,8 @@ class _PathFinder(importlib.machinery.PathFinder):
     @classmethod
     def find_spec(cls, fullname, path=None, target=None):
         logger.info('loading %s', fullname)
+        if fullname == 'rlcompleter':
+            _install_readline()
         spec = super().find_spec(fullname, path=path, target=target)
         if not spec:
             return spec
@@ -162,23 +177,71 @@ class _PathFinder(importlib.machinery.PathFinder):
 class _SourceFileLoader(importlib.machinery.SourceFileLoader):
     def source_to_code(self, data, path, *, _optimize=-1):
         source = importlib.util.decode_source(data)
-        source = refactor(source, name=path)
+        source = self._refactor(source, path)
         return super().source_to_code(source, path, _optimize=_optimize)
 
+    def _refactor(self, source, name):
+        lines = []
+        do_refactor = False
+        for line in source.split('\n'):
+            if line.split() == 'from __past__ import print_statement'.split():
+                do_refactor = True
+                line = ''
+            lines.append(line)
+        if do_refactor:
+            source = '\n'.join(lines)
+            source = refactor(source, name=name)
+        return source
 
-def _install():
-    # For the interpreter.
-    rfp = c_void_p.in_dll(pythonapi, 'PyOS_ReadlineFunctionPointer')
-    original = rfp.value
-    if original is not None:
-        rfp.value = cast(_call_readline, c_void_p).value
-    # For imports.
+
+_installed = False
+
+
+def install():
+    global _installed
+    if _installed:
+        logger.warning('print_statement already installed')
+        return
+    _installed = True
+    _install_readline()
     index = sys.meta_path.index(importlib.machinery.PathFinder)
     sys.meta_path[index] = _PathFinder
-    return original
 
-_original = _install()
-if _original is not None:
-    _original_call_readline = PyOS_ReadlineFunctionPointer_t(_original)
-else:
-    logger.warning('no readline function pointer - assuming this is a test')
+
+_original = None
+
+
+def _install_readline():
+    global _original
+    assert _installed
+    if _original is not None:
+        logger.warning('readline hook already installed')
+        return
+    logger.info('installing readline hook')
+    rfp = c_void_p.in_dll(pythonapi, 'PyOS_ReadlineFunctionPointer')
+    _original = rfp.value
+    if _original is None:
+        logger.warning('could not install - will wait for _PathFinder')
+        return
+    _original = PyOS_ReadlineFunctionPointer_t(_original)
+    rfp.value = cast(_call_readline, c_void_p).value
+
+
+def main():
+    path = os.path.dirname(__file__)
+    path = os.path.join(path, 'print_statement.pth')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('action', choices=['install', 'uninstall'])
+    parser.add_argument('--path', default=path)
+    args = parser.parse_args()
+    if args.action == 'install':
+        with open(args.path, 'w') as f:
+            f.write('import print_statement; print_statement.install()')
+        print('created ' + args.path)
+    else:
+        os.remove(args.path)
+        print('deleted ' + args.path)
+
+
+if __name__ == '__main__':
+    main()
