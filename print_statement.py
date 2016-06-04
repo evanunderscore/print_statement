@@ -1,3 +1,6 @@
+import importlib
+import importlib.machinery
+import importlib.util
 import logging
 import sys
 from ctypes import c_char_p, c_size_t, c_void_p, cast, memmove, pythonapi, CFUNCTYPE
@@ -6,7 +9,7 @@ from lib2to3.pgen2.parse import ParseError
 from lib2to3.pgen2.tokenize import TokenError
 
 
-assert sys.version_info.major == 3, 'Python 2 already has the print statement'
+assert sys.version_info >= (3, 4), 'print_statement requires Python 3.4+'
 
 
 logger = logging.getLogger(__name__)
@@ -17,7 +20,15 @@ def refactor(script, name='<string>'):
     # RefactoringTool.refactor_string seems to have problems parsing
     # if the input string doesn't end with a newline.
     script += '\n'
-    script = _refactor(script, name)
+    try:
+        script = _refactor(script, name)
+    except TokenError as err:
+        msg, (lineno, offset) = err.args
+        raise _syntax_error(msg, name, lineno, offset, script) from None
+    except ParseError as err:
+        msg = 'invalid syntax'
+        _, (lineno, offset) = err.context
+        raise _syntax_error(msg, name, lineno, offset, script) from None
     assert script[-1] == '\n'
     return script[:-1]
 
@@ -26,6 +37,11 @@ def _refactor(script, name):
     rt = RefactoringTool(['lib2to3.fixes.fix_print'])
     tree = rt.refactor_string(script, name)
     return str(tree)
+
+
+def _syntax_error(msg, name, lineno, offset, script):
+    line = script.split('\n')[lineno - 1]
+    return SyntaxError(msg, (name, lineno, offset + 1, line))
 
 
 class _Printerpreter:
@@ -130,12 +146,35 @@ def _call_readline(stdin, stdout, prompt):
     return ptr
 
 
+class _PathFinder(importlib.machinery.PathFinder):
+    @classmethod
+    def find_spec(cls, fullname, path=None, target=None):
+        logger.info('loading %s', fullname)
+        spec = super().find_spec(fullname, path=path, target=target)
+        if not spec:
+            return spec
+        loader = spec.loader
+        if isinstance(loader, importlib.machinery.SourceFileLoader):
+            spec.loader = _SourceFileLoader(loader.name, loader.path)
+        return spec
+
+
+class _SourceFileLoader(importlib.machinery.SourceFileLoader):
+    def source_to_code(self, data, path, *, _optimize=-1):
+        source = importlib.util.decode_source(data)
+        source = refactor(source, name=path)
+        return super().source_to_code(source, path, _optimize=_optimize)
+
+
 def _install():
+    # For the interpreter.
     rfp = c_void_p.in_dll(pythonapi, 'PyOS_ReadlineFunctionPointer')
     original = rfp.value
-    if original is None:
-        return None
-    rfp.value = cast(_call_readline, c_void_p).value
+    if original is not None:
+        rfp.value = cast(_call_readline, c_void_p).value
+    # For imports.
+    index = sys.meta_path.index(importlib.machinery.PathFinder)
+    sys.meta_path[index] = _PathFinder
     return original
 
 _original = _install()

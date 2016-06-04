@@ -1,4 +1,7 @@
+import io
+import os
 import unittest
+import sys
 
 import print_statement
 from print_statement import refactor
@@ -115,3 +118,37 @@ class TestPrinterpreter(unittest.TestCase):
         self.assertEqual(self.refactor('try:\n'), '#\n')
         self.assertEqual(self.refactor(' pass\n'), '#\n')
         self.assertEqual(self.refactor('\n'), 'try:\n pass\n\n')
+
+
+class TestImport(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        assert '_test_package' not in sys.modules
+
+    def test_import_package(self):
+        import _test_package
+        buffer = io.StringIO()
+        _test_package.test(buffer)
+        buffer.seek(0)
+        self.assertEqual(buffer.read(), '_test_package\n')
+        self.assertEqual(_test_package.test.__module__, '_test_package')
+
+    def test_import_module(self):
+        from _test_package import test_module
+        buffer = io.StringIO()
+        test_module.test(buffer)
+        buffer.seek(0)
+        self.assertEqual(buffer.read(), '_test_package.test_module\n')
+        self.assertEqual(test_module.test.__module__, '_test_package.test_module')
+
+    def test_token_error(self):
+        with self.assertRaises(SyntaxError) as err:
+            from _test_package import token_error
+        filename = os.path.basename(err.exception.filename)
+        self.assertEqual(filename, 'token_error.py')
+
+    def test_syntax_error(self):
+        with self.assertRaises(SyntaxError) as err:
+            from _test_package import parse_error
+        filename = os.path.basename(err.exception.filename)
+        self.assertEqual(filename, 'parse_error.py')

@@ -16,5 +16,3 @@ Simply import in your interpreter to make print behave as a statement::
     'file contents\n'
     >>> print 1, 2, 3,
     1, 2, 3 >>>
-
-(NOTE: This only works in the interpreter.)
