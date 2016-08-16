@@ -60,9 +60,9 @@ FAQ
 
 **Q: Will this work in scripts?**
 
-A: Yes, as long as ``print_statement.install()`` is called before your script
-is imported. You can do this automatically with
-``python -m print_statement install``.
+A: Not right now, but it will work for imported modules, as long as
+``print_statement.install()`` is called first.
+You can do this automatically with ``python -m print_statement install``.
 
 **Q: Is this a hack?**
 
